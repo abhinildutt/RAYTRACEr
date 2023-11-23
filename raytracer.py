@@ -98,6 +98,7 @@ def ray_triangle_intersection(ind1, ind2, ind3, direction):
         ind2 = len(Vertices) + ind2 + 1
     if(ind3 < 0):
         ind3 = len(Vertices) + ind3 + 1
+        
     p1 = np.array(Vertices[ind1-1][0])
     p2 = np.array(Vertices[ind2-1][0])
     p3 = np.array(Vertices[ind3-1][0])
@@ -138,6 +139,12 @@ def calc_color_sphere(cent, rsi, obj_color, direction, av_light, av_bulb_light, 
         pixel_y = int((-latitude + math.pi / 2) / math.pi * height)
 
         obj_color_array = np.array(Texture_file[pixel_x, pixel_y][:3]) / 255
+
+        for i in range(3):
+            if(obj_color_array[i] <= 0.04045):
+                obj_color_array[i] /= 12.92
+            else:
+                obj_color_array[i] = ((obj_color_array[i] + 0.055) / 1.055) ** 2.4
 
     for light in av_light:
         light_dir_array = np.array(light[0])
@@ -185,9 +192,15 @@ def calc_color_sphere(cent, rsi, obj_color, direction, av_light, av_bulb_light, 
 def calc_color_plane(calc_normal, obj_color, direction, av_light, av_bulb_light, texcoord, Texture_file):
     act_color = np.array([0, 0, 0])
     obj_color_array = np.array(obj_color)
-    if(texcoord != None):
+    if(texcoord != []):
         width, height = Tf_map[Texture_file]
         obj_color_array = np.array(Texture_file[int(texcoord[0]*width)-1, int(texcoord[1]*height)-1][:3]) / 255
+        for i in range(3):
+            if(obj_color_array[i] <= 0.04045):
+                obj_color_array[i] /= 12.92
+            else:
+                obj_color_array[i] = ((obj_color_array[i] + 0.055) / 1.055) ** 2.4
+                
     for light in av_light:
         light_dir_array = np.array(light[0])
         light_dir_array = light_dir_array/ np.sqrt(np.sum(light_dir_array**2))
@@ -351,7 +364,7 @@ def shadows(ixy):
             color = calc_color_sphere([ixy[points][2][0], ixy[points][2][1], ixy[points][2][2]], points, ixy[points][2][4], ixy[points][3], av_light, av_bulb_light, ixy[points][2][5])
             image.im.putpixel((ixy[points][0], ixy[points][1]), (int(color[0]*255), int(color[1]*255), int(color[2]*255), 255))
         elif ixy[points][4] == 1:
-            color = calc_color_plane(ixy[points][2][0:3], ixy[points][2][4], ixy[points][3], av_light, av_bulb_light, None, None)
+            color = calc_color_plane(ixy[points][2][0:3], ixy[points][2][4], ixy[points][3], av_light, av_bulb_light, [], None)
             image.im.putpixel((ixy[points][0], ixy[points][1]), (int(color[0]*255), int(color[1]*255), int(color[2]*255), 255))
         elif ixy[points][4] == 2:
             color = calc_color_plane(ixy[points][5], ixy[points][2][3], ixy[points][3], av_light, av_bulb_light, ixy[points][6], ixy[points][2][4])
