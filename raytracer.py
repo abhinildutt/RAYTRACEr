@@ -20,7 +20,10 @@ ray = {
 }
 
 Spheres = []
+Planes = []
 Lights = []
+expose_v = -1
+target_up = []
 
 def create_png(width, height, name):
     global image
@@ -58,10 +61,27 @@ def ray_sphere_intersection(x, y, z, radius, direction):
     t = tc - t_off
     return [t, [t*direction[0] + ray["center"][0], t*direction[1] + ray["center"][1], t*direction[2] + ray["center"][2]]]
 
-def calc_color(x, y, cent, rsi, obj_color, direction):
+def ray_plane_intersection(A, B, C, D, direction):
+    mag = math.sqrt(magsq(direction[0], direction[1], direction[2]))
+    direction[0] = direction[0] / mag
+    direction[1] = direction[1] / mag
+    direction[2] = direction[2] / mag
+
+    normal = np.array([A, B, C])
+    point  = - D / math.sqrt(A*A + B*B + C*C) * normal
+    if(np.dot(direction,normal) == 0):
+        return "no intersection"
+    t = np.dot((point - ray["center"]), normal) / np.dot(direction,normal)
+    if(t < 0):
+        return "no intersection"
+    intersect_pt = np.multiply(t, direction) + np.array(ray["center"])
+    return [t, list(intersect_pt)]
+    
+
+def calc_color_sphere(cent, rsi, obj_color, direction, av_light):
     act_color = np.array([0, 0, 0])
     obj_color_array = np.array(obj_color)
-    for light in Lights:
+    for light in av_light:
         light_dir_array = np.array(light[0])
         light_dir_array = light_dir_array/ np.sqrt(np.sum(light_dir_array**2))
         light_color_array = np.array(light[1])
@@ -77,6 +97,10 @@ def calc_color(x, y, cent, rsi, obj_color, direction):
         oln = np.multiply(object_times_light, normal_dot_light)
         act_color = np.add(act_color, oln)
 
+    # exposure
+    if(expose_v >= 0):
+        act_color = 1 - np.exp(-expose_v * act_color)
+
     for i in range(3):
         if(act_color[i] < 0):
             act_color[i] = 0
@@ -84,8 +108,35 @@ def calc_color(x, y, cent, rsi, obj_color, direction):
             act_color[i] = 1
 
     return list(act_color)
-    
 
+def calc_color_plane(calc_normal, obj_color, direction, av_light):
+    act_color = np.array([0, 0, 0])
+    obj_color_array = np.array(obj_color)
+    for light in av_light:
+        light_dir_array = np.array(light[0])
+        light_dir_array = light_dir_array/ np.sqrt(np.sum(light_dir_array**2))
+        light_color_array = np.array(light[1])
+        object_times_light = np.multiply(light_color_array, obj_color_array)
+        normal = np.array(calc_normal)
+        light_dir = light_dir_array
+        if(np.dot(normal, np.array(direction)) > 0):
+            normal = -normal
+        normal = normal/ np.sqrt(np.sum(normal**2))
+        normal_dot_light = np.dot(normal, light_dir)
+        oln = np.multiply(object_times_light, normal_dot_light)
+        act_color = np.add(act_color, oln)
+
+    # exposure
+    if(expose_v >= 0):
+        act_color = 1 - np.exp(-expose_v * act_color)
+
+    for i in range(3):
+        if(act_color[i] < 0):
+            act_color[i] = 0
+        elif(act_color[i] > 1):
+            act_color[i] = 1
+
+    return list(act_color)
 
 def draw():
     intersect_to_xy = defaultdict(None)
@@ -106,35 +157,53 @@ def draw():
                 if(rsi != "no intersection" and rsi[0] < t_min):
                     t_min = rsi[0]
                     intersection_point = rsi[1]
-                    intersection_data = [x, y, sphere, direction]
+                    intersection_data = [x, y, sphere, direction, 0]
             
+            for plane in Planes:
+                rpi = ray_plane_intersection(plane[0], plane[1], plane[2], plane[3], direction)
+                if(rpi != "no intersection" and rpi[0] < t_min):
+                    t_min = rpi[0]
+                    intersection_point = rpi[1]
+                    intersection_data = [x, y, plane, direction, 1]
+
             if intersection_point:
                 intersect_to_xy[tuple(intersection_point)] = intersection_data
  
-
-    for points in intersect_to_xy.keys():
-        ixy = intersect_to_xy[points]
-        color = calc_color(ixy[0], ixy[1], [ixy[2][0], ixy[2][1], ixy[2][2]], points, ixy[2][4], ixy[3])
-        image.im.putpixel((ixy[0], ixy[1]), (int(color[0]*255), int(color[1]*255), int(color[2]*255), 255))
-
     shadows(intersect_to_xy)
 
 def shadows(ixy):
     for points in ixy.keys():
+        av_light = []
         for light in Lights:
+            flag_temp = 0
             ray["center"] = list(points)
             for sphere in Spheres:
                 if(sphere != ixy[points][2]):
                     rsi = ray_sphere_intersection(sphere[0], sphere[1], sphere[2], sphere[3], light[0])
                     if(rsi != "no intersection"):
-                        image.im.putpixel((ixy[points][0], ixy[points][1]), (0, 0, 0, 255))
-    ray["center"] = [0, 0, 0]
-
+                        image.im.putpixel((ixy[points][0], ixy[points][1]), (0, 0, 0, 255)) 
+                    else:
+                        flag_temp += 1
+            for plane in Planes:
+                if(plane != ixy[points][2]):
+                    rpi = ray_plane_intersection(plane[0],plane[1],plane[2], plane[3], light[0])
+                    if(rpi != "no intersection"):
+                        image.im.putpixel((ixy[points][0], ixy[points][1]), (0, 0, 0, 255)) 
+                    else:
+                        flag_temp += 1
+            if(flag_temp == len(Spheres) + len(Planes) - 1):
+                av_light.append(light)
         
+        if ixy[points][4] == 0:
+            color = calc_color_sphere([ixy[points][2][0], ixy[points][2][1], ixy[points][2][2]], points, ixy[points][2][4], ixy[points][3], av_light)
+            image.im.putpixel((ixy[points][0], ixy[points][1]), (int(color[0]*255), int(color[1]*255), int(color[2]*255), 255))
+        elif ixy[points][4] == 1:
+            color = calc_color_plane(ixy[points][2][0:3], ixy[points][2][4], ixy[points][3], av_light)
+            image.im.putpixel((ixy[points][0], ixy[points][1]), (int(color[0]*255), int(color[1]*255), int(color[2]*255), 255))
 
 
 if __name__ == "__main__":
-    commands = ['png', 'sphere', 'sun', 'color']
+    commands = ['png', 'sphere', 'sun', 'color', 'expose', 'eye', 'forward', 'up', 'plane']
     for line in file.readlines():
         words = line.split()
         if(len(words) == 0):
@@ -147,6 +216,24 @@ if __name__ == "__main__":
             Lights.append([[float(words[1]), float(words[2]), float(words[3])], curr_color])
         elif(words[0] == "color"):
             curr_color = [float(elem) for elem in words[1:]]
+        elif(words[0] == "expose"):
+            expose_v = float(words[1])
+        elif(words[0] == "eye"):
+            ray["center"] = [float(words[1]), float(words[2]), float(words[3])]
+        elif(words[0] == "forward"):
+            ray["forward"] = [float(words[1]), float(words[2]), float(words[3])]
+            vec_right = np.cross(np.array(ray["forward"]), np.array(ray["up"]))
+            ray["right"] = list(vec_right/np.linalg.norm(vec_right))
+            vec_up = np.cross(np.array(ray["right"]), np.array(ray["forward"]))
+            ray["up"] = list(vec_up/np.linalg.norm(vec_up))
+            if np.dot(np.array(target_up), np.array(ray["up"])) < 0:
+                ray["right"] = list(-vec_right/np.linalg.norm(vec_right))
+                vec_up = np.cross(np.array(ray["right"]), np.array(ray["forward"]))
+                ray["up"] = list(vec_up/np.linalg.norm(vec_up))
+        elif(words[0] == "up"):
+            target_up = [float(words[1]), float(words[2]), float(words[3])] 
+        elif(words[0] == "plane"):
+            Planes.append([float(words[1]), float(words[2]), float(words[3]), float(words[4]), curr_color])
     draw()    
     image.save("photos/" + imageName)
         
