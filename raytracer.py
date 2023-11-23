@@ -24,6 +24,7 @@ Planes = []
 Lights = []
 Vertices = []
 Triangles = []
+Bulbs = []
 Tf_map = {}
 Texture_file = None
 expose_v = -1
@@ -121,7 +122,7 @@ def ray_triangle_intersection(ind1, ind2, ind3, direction):
     texture_coords = list(np.multiply(b1, Vertices[ind1-1][1]) + np.multiply(b2,Vertices[ind2-1][1]) + np.multiply(b3,Vertices[ind3-1][1]))
     return [t, list(intersect_pt), normal, texture_coords]
 
-def calc_color_sphere(cent, rsi, obj_color, direction, av_light, Texture_file):
+def calc_color_sphere(cent, rsi, obj_color, direction, av_light, av_bulb_light, Texture_file):
     act_color = np.array([0, 0, 0])
     obj_color_array = np.array(obj_color)
     p = np.array(rsi)
@@ -146,23 +147,42 @@ def calc_color_sphere(cent, rsi, obj_color, direction, av_light, Texture_file):
         light_dir = light_dir_array
         if(np.dot(normal, np.array(direction)) > 0):
             normal = -normal
-        # normal = normal/ np.sqrt(np.sum(normal**2))
         normal_dot_light = np.dot(normal, light_dir)
+        if(normal_dot_light < 0):
+            normal_dot_light = 0
         oln = np.multiply(object_times_light, normal_dot_light)
         act_color = np.add(act_color, oln)
+
+
+    for light in av_bulb_light:
+        light_dir_array = np.array(light[0]) - p
+        light_dir_array = light_dir_array/ np.sqrt(np.sum(light_dir_array**2))
+        light_color_array = np.array(light[1])
+        object_times_light = np.multiply(light_color_array, obj_color_array)
+        light_dir = light_dir_array
+        if np.dot(normal, np.array(direction)) > 0:
+            normal = -normal
+        normal_dot_light = np.dot(normal, light_dir)
+        if(normal_dot_light < 0):
+            normal_dot_light = 0
+        oln = np.multiply(object_times_light, normal_dot_light)
+        oln = np.multiply(oln, 1 / magsq(p[0] - light[0][0], p[1] - light[0][1], p[2] - light[0][2]))
+        act_color = np.add(act_color, oln)
+
     # exposure
     if(expose_v >= 0):
         act_color = 1 - np.exp(-expose_v * act_color)
 
     for i in range(3):
-        if(act_color[i] < 0):
-            act_color[i] = 0
-        elif(act_color[i] > 1):
-            act_color[i] = 1
+        if act_color[i] <= 0.0031308:
+            act_color[i] *= 12.92
+        else:
+            act_color[i] = 1.055 * (act_color[i]**(1/2.4)) - 0.055
+            act_color[i] = max(0, min(1, act_color[i]))
 
     return list(act_color)
 
-def calc_color_plane(calc_normal, obj_color, direction, av_light, texcoord, Texture_file):
+def calc_color_plane(calc_normal, obj_color, direction, av_light, av_bulb_light, texcoord, Texture_file):
     act_color = np.array([0, 0, 0])
     obj_color_array = np.array(obj_color)
     if(texcoord != None):
@@ -187,10 +207,11 @@ def calc_color_plane(calc_normal, obj_color, direction, av_light, texcoord, Text
         act_color = 1 - np.exp(-expose_v * act_color)
 
     for i in range(3):
-        if(act_color[i] < 0):
-            act_color[i] = 0
-        elif(act_color[i] > 1):
-            act_color[i] = 1
+        if act_color[i] <= 0.0031308:
+            act_color[i] *= 12.92
+        else:
+            act_color[i] = 1.055 * (act_color[i]**(1/2.4)) - 0.055
+            act_color[i] = max(0, min(1, act_color[i]))
 
     return list(act_color)
 
@@ -201,7 +222,7 @@ def draw():
             sx = (2*x - Width)/ max(Width, Height)
             sy = (Height - 2*y)/ max(Width, Height)
 
-            direction = [ray["forward"][0]* + sx*ray["right"][0] + sy*ray["up"][0], 
+            direction = [ray["forward"][0] + sx*ray["right"][0] + sy*ray["up"][0], 
                          ray["forward"][1] + sx*ray["right"][1] + sy*ray["up"][1], 
                          ray["forward"][2] + sx*ray["right"][2] + sy*ray["up"][2]]
             
@@ -250,11 +271,13 @@ def draw():
 
             if intersection_point:
                 intersect_to_xy[tuple(intersection_point)] = intersection_data
+    
     shadows(intersect_to_xy)
 
 def shadows(ixy):
     for points in ixy.keys():
         av_light = []
+        av_bulb_light = []
         for light in Lights:
             flag_temp = 0
             ray["center"] = list(points)
@@ -281,16 +304,57 @@ def shadows(ixy):
                         flag_temp += 1
             if(flag_temp == len(Spheres) + len(Planes) + len(Triangles) - 1):
                 av_light.append(light)
-            
+        
+        for light in Bulbs:
+            flag_temp = 0
+            ray["center"] = list(points)
+            PtoL = np.array([points[0] - light[0][0], points[1] - light[0][1], points[2] - light[0][2]])
+            dist = magsq(points[0] - light[0][0], points[1] - light[0][1], points[2] - light[0][2])
+            for sphere in Spheres:
+                if(sphere != ixy[points][2]):
+                    rsi = ray_sphere_intersection(sphere[0], sphere[1], sphere[2], sphere[3], list(-PtoL))
+                    if(rsi != "no intersection"):
+                        PtoO = np.array([points[0] - rsi[1][0], points[1] - rsi[1][1], points[2] - rsi[1][2]])
+                        dist2 = magsq(points[0] - rsi[1][0], points[1] - rsi[1][1], points[2] - rsi[1][2])
+                        if(dist2 <= dist and np.dot(PtoO, PtoL) >= 0.0):
+                            image.im.putpixel((ixy[points][0], ixy[points][1]), (0, 0, 0, 255))
+                        else:
+                            flag_temp += 1 
+                    else:
+                        flag_temp += 1
+            for plane in Planes:
+                if(plane != ixy[points][2]):
+                    rpi = ray_plane_intersection(plane[0],plane[1],plane[2], plane[3], list(-PtoL))
+                    if(rpi != "no intersection"):
+                        dist2 = magsq(points[0] - rpi[1][0], points[1] - rpi[1][1], points[2] - rpi[1][2])
+                        if(dist2 < dist):
+                            image.im.putpixel((ixy[points][0], ixy[points][1]), (0, 0, 0, 255))
+                        else:
+                            flag_temp += 1
+                    else:
+                        flag_temp += 1
+            for tri in Triangles:
+                if(tri != ixy[points][2]):
+                    rti = ray_triangle_intersection(tri[0],tri[1],tri[2], list(-PtoL))
+                    if(rti != "no intersection"):
+                        dist2 = magsq(points[0] - rti[1][0], points[1] - rti[1][1], points[2] - rti[1][2])
+                        if(dist2 < dist):
+                            image.im.putpixel((ixy[points][0], ixy[points][1]), (0, 0, 0, 255))
+                        else:
+                            flag_temp += 1
+                    else:
+                        flag_temp += 1
+            if(flag_temp == len(Spheres) + len(Planes) + len(Triangles) - 1):
+                av_bulb_light.append(light)
         # COLORING
         if ixy[points][4] == 0:
-            color = calc_color_sphere([ixy[points][2][0], ixy[points][2][1], ixy[points][2][2]], points, ixy[points][2][4], ixy[points][3], av_light, ixy[points][2][5])
+            color = calc_color_sphere([ixy[points][2][0], ixy[points][2][1], ixy[points][2][2]], points, ixy[points][2][4], ixy[points][3], av_light, av_bulb_light, ixy[points][2][5])
             image.im.putpixel((ixy[points][0], ixy[points][1]), (int(color[0]*255), int(color[1]*255), int(color[2]*255), 255))
         elif ixy[points][4] == 1:
-            color = calc_color_plane(ixy[points][2][0:3], ixy[points][2][4], ixy[points][3], av_light, None)
+            color = calc_color_plane(ixy[points][2][0:3], ixy[points][2][4], ixy[points][3], av_light, av_bulb_light, None, None)
             image.im.putpixel((ixy[points][0], ixy[points][1]), (int(color[0]*255), int(color[1]*255), int(color[2]*255), 255))
         elif ixy[points][4] == 2:
-            color = calc_color_plane(ixy[points][5], ixy[points][2][3], ixy[points][3], av_light, ixy[points][6], ixy[points][2][4])
+            color = calc_color_plane(ixy[points][5], ixy[points][2][3], ixy[points][3], av_light, av_bulb_light, ixy[points][6], ixy[points][2][4])
             image.im.putpixel((ixy[points][0], ixy[points][1]), (int(color[0]*255), int(color[1]*255), int(color[2]*255), 255))
 
 
@@ -298,7 +362,7 @@ def shadows(ixy):
 
 
 if __name__ == "__main__":
-    commands = ['png', 'sphere', 'sun', 'color', 'expose', 'eye', 'forward', 'up', 'plane', 'xyz', 'tri', 'texture', 'texcoord', 'fisheye', 'panorama']
+    commands = ['png', 'sphere', 'sun', 'color', 'expose', 'eye', 'forward', 'up', 'plane', 'xyz', 'tri', 'texture', 'texcoord', 'fisheye', 'panorama', 'bulb']
     for line in file.readlines():
         words = line.split()
         if(len(words) == 0):
@@ -308,7 +372,7 @@ if __name__ == "__main__":
         elif(words[0] == "sphere"):
             Spheres.append([float(words[1]), float(words[2]), float(words[3]), float(words[4]), curr_color, Texture_file])
         elif(words[0] == "sun"):
-            Lights.append([[float(words[1]), float(words[2]), float(words[3])], curr_color, "sun"])
+            Lights.append([[float(words[1]), float(words[2]), float(words[3])], curr_color])
         elif(words[0] == "color"):
             curr_color = [float(elem) for elem in words[1:]]
         elif(words[0] == "expose"):
@@ -349,6 +413,8 @@ if __name__ == "__main__":
             fisheye = 1
         elif(words[0] == "panorama"):
             panorama = 1
+        elif(words[0] == "bulb"):
+            Bulbs.append([[float(words[1]), float(words[2]), float(words[3])], curr_color])
     
     draw()    
     image.save("photos/" + imageName)
