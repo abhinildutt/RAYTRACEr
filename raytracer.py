@@ -25,10 +25,13 @@ Lights = []
 Vertices = []
 Triangles = []
 Tf_map = {}
+Texture_file = None
 expose_v = -1
 target_up = []
 texcoord = []
 bounces = 0
+fisheye = 0
+panorama = 0
 
 def create_png(width, height, name):
     global image
@@ -197,10 +200,29 @@ def draw():
         for y in range(Height):
             sx = (2*x - Width)/ max(Width, Height)
             sy = (Height - 2*y)/ max(Width, Height)
-            direction = [ray["forward"][0] + sx*ray["right"][0] + sy*ray["up"][0], 
+
+            direction = [ray["forward"][0]* + sx*ray["right"][0] + sy*ray["up"][0], 
                          ray["forward"][1] + sx*ray["right"][1] + sy*ray["up"][1], 
                          ray["forward"][2] + sx*ray["right"][2] + sy*ray["up"][2]]
             
+            if fisheye == 1:
+                if sx**2 + sy**2 >= 1:
+                    continue        
+                direction = [ray["forward"][0]*math.sqrt(1 - sx**2 - sy**2) + sx*ray["right"][0] + sy*ray["up"][0], 
+                            ray["forward"][1]*math.sqrt(1 - sx**2 - sy**2) + sx*ray["right"][1] + sy*ray["up"][1], 
+                            ray["forward"][2]*math.sqrt(1 - sx**2 - sy**2) + sx*ray["right"][2] + sy*ray["up"][2]]
+            
+            if panorama == 1:
+                latitude = (y / Height) * math.pi - math.pi/2
+                longitude = (x / Width) * 2 * math.pi - math.pi
+
+                direction = [
+                    math.cos(latitude) * math.sin(longitude),
+                    -math.sin(latitude),
+                    -math.cos(latitude) * math.cos(longitude)
+                ]
+
+
             t_min = math.inf
             intersection_point = None
             intersection_data = None
@@ -276,7 +298,7 @@ def shadows(ixy):
 
 
 if __name__ == "__main__":
-    commands = ['png', 'sphere', 'sun', 'color', 'expose', 'eye', 'forward', 'up', 'plane', 'xyz', 'tri', 'texture', 'texcoord']
+    commands = ['png', 'sphere', 'sun', 'color', 'expose', 'eye', 'forward', 'up', 'plane', 'xyz', 'tri', 'texture', 'texcoord', 'fisheye', 'panorama']
     for line in file.readlines():
         words = line.split()
         if(len(words) == 0):
@@ -323,6 +345,10 @@ if __name__ == "__main__":
             if(len(words) < 3):
                 texcoord = [0, 0]
             texcoord = [float(words[1]), float(words[2])]
+        elif(words[0] == "fisheye"):
+            fisheye = 1
+        elif(words[0] == "panorama"):
+            panorama = 1
     
     draw()    
     image.save("photos/" + imageName)
